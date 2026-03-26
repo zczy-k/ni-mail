@@ -51,7 +51,7 @@ export default {
         status: 302,
         headers: {
           Location: "/",
-          "Set-Cookie": `${SESSION_KEY}=${token}; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_TTL}; Path=/`,
+          "Set-Cookie": `${SESSION_KEY}=${token}; HttpOnly; SameSite=Lax; Max-Age=${SESSION_TTL}; Path=/`,
         },
       });
     }
