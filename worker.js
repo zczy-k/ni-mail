@@ -75,9 +75,24 @@ export default {
     }
 
     // ── UI 路由：需登录 ──
-    if (url.pathname === "/" || url.pathname === "/mail-detail") {
+    if (url.pathname === "/" || url.pathname === "/mail-detail" || url.pathname === "/ui-delete") {
       const authed = await checkSession(request, env);
       if (!authed) return html(loginPage());
+
+      // 删除操作（POST /ui-delete）
+      if (url.pathname === "/ui-delete" && request.method === "POST") {
+        const form = await request.formData();
+        const mode = form.get("mode");
+        if (mode === "all") {
+          await env.MAIL_KV.delete(STORAGE_KEY);
+        } else {
+          const ids = form.getAll("id");
+          const mails = await loadInbox(env);
+          const updated = mails.filter((m) => !ids.includes(m.id));
+          await env.MAIL_KV.put(STORAGE_KEY, JSON.stringify(updated));
+        }
+        return new Response(null, { status: 302, headers: { Location: "/" } });
+      }
 
       if (url.pathname === "/mail-detail") {
         const id = url.searchParams.get("id");
@@ -183,13 +198,14 @@ function loginPage(error = "") {
 
 function inboxPage(mails) {
   const rows = mails.length === 0
-    ? `<tr><td colspan="4" style="text-align:center;color:#a1a1aa;padding:40px">暂无邮件</td></tr>`
+    ? `<tr><td colspan="5" style="text-align:center;color:#a1a1aa;padding:40px">暂无邮件</td></tr>`
     : mails.map((m) => `
-      <tr onclick="location.href='/mail-detail?id=${m.id}'" style="cursor:pointer">
-        <td>${escHtml(m.from)}</td>
-        <td>${escHtml(m.subject)}</td>
-        <td>${escHtml(m.to)}</td>
-        <td>${new Date(m.receivedAt).toLocaleString("zh")}</td>
+      <tr>
+        <td onclick="event.stopPropagation()"><input type="checkbox" name="id" value="${m.id}" form="batch-form"></td>
+        <td onclick="location.href='/mail-detail?id=${m.id}'" style="cursor:pointer">${escHtml(m.from)}</td>
+        <td onclick="location.href='/mail-detail?id=${m.id}'" style="cursor:pointer">${escHtml(m.subject)}</td>
+        <td onclick="location.href='/mail-detail?id=${m.id}'" style="cursor:pointer">${escHtml(m.to)}</td>
+        <td onclick="location.href='/mail-detail?id=${m.id}'" style="cursor:pointer">${new Date(m.receivedAt).toLocaleString("zh")}</td>
       </tr>`).join("");
 
   return `<!DOCTYPE html>
@@ -211,8 +227,14 @@ function inboxPage(mails) {
   th{text-align:left;padding:12px 16px;font-size:.8rem;color:#71717a;border-bottom:1px solid #f0f0f0;background:#fafafa}
   td{padding:13px 16px;font-size:.9rem;border-bottom:1px solid #f4f4f5;color:#27272a;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   tr:hover td{background:#f9f9ff}
-  .badge{display:inline-block;background:#f0f0ff;color:#6366f1;border-radius:4px;padding:2px 7px;font-size:.75rem}
-  .count{font-size:.85rem;color:#71717a;margin-bottom:12px}
+  .toolbar{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+  .count{font-size:.85rem;color:#71717a}
+  .btn{padding:7px 14px;border:none;border-radius:7px;font-size:.85rem;cursor:pointer;font-weight:600}
+  .btn-del{background:#fee2e2;color:#dc2626}
+  .btn-del:hover{background:#fecaca}
+  .btn-all{background:#fef3c7;color:#b45309}
+  .btn-all:hover{background:#fde68a}
+  input[type=checkbox]{width:15px;height:15px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -221,16 +243,38 @@ function inboxPage(mails) {
   <a href="/logout">退出登录</a>
 </header>
 <div class="wrap">
-  <p class="count">共 <strong>${mails.length}</strong> 封邮件</p>
+  <div class="toolbar">
+    <span class="count">共 <strong>${mails.length}</strong> 封邮件</span>
+    <button class="btn btn-del" form="batch-form" onclick="return confirmDel()">删除选中</button>
+    <button class="btn btn-all" onclick="deleteAll()">清空收件箱</button>
+  </div>
   <div class="card">
-    <table>
-      <thead><tr>
-        <th>发件人</th><th>主题</th><th>收件人</th><th>时间</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <form id="batch-form" method="POST" action="/ui-delete">
+      <input type="hidden" name="mode" value="batch">
+      <table>
+        <thead><tr>
+          <th><input type="checkbox" id="chk-all" onclick="toggleAll(this)"></th>
+          <th>发件人</th><th>主题</th><th>收件人</th><th>时间</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </form>
   </div>
 </div>
+<form id="all-form" method="POST" action="/ui-delete" style="display:none">
+  <input type="hidden" name="mode" value="all">
+</form>
+<script>
+  function toggleAll(cb){document.querySelectorAll('input[name=id]').forEach(c=>c.checked=cb.checked)}
+  function confirmDel(){
+    const n=document.querySelectorAll('input[name=id]:checked').length;
+    if(!n){alert('请先勾选邮件');return false;}
+    return confirm('确认删除选中的 '+n+' 封邮件？');
+  }
+  function deleteAll(){
+    if(confirm('确认清空全部邮件？'))document.getElementById('all-form').submit();
+  }
+</script>
 </body></html>`;
 }
 
@@ -275,7 +319,14 @@ function detailPage(mail) {
   <a href="/logout">退出登录</a>
 </header>
 <div class="wrap">
-  <a class="back" href="/">← 返回收件箱</a>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <a class="back" href="/">← 返回收件箱</a>
+    <form method="POST" action="/ui-delete" onsubmit="return confirm('确认删除此邮件？')">
+      <input type="hidden" name="mode" value="batch">
+      <input type="hidden" name="id" value="${escHtml(mail.id)}">
+      <button type="submit" style="background:#ef4444;color:#fff;border:none;border-radius:8px;padding:7px 16px;font-size:.85rem;cursor:pointer">删除此邮件</button>
+    </form>
+  </div>
   <div class="card">
     <div class="meta">
       <h2>${escHtml(mail.subject)}</h2>
