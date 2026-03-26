@@ -69,6 +69,11 @@ export default {
       });
     }
 
+    // ── 静态资源 ──
+    if (url.pathname === "/favicon.ico") {
+      return new Response(null, { status: 204 });
+    }
+
     // ── UI 路由：需登录 ──
     if (url.pathname === "/" || url.pathname === "/mail-detail") {
       const authed = await checkSession(request, env);
